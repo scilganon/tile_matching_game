@@ -1,0 +1,284 @@
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.2.0/css/all.css" integrity="sha384-hWVjflwFxL6sNzntih27bfxkr27PmbbK/iSvJ+a4+0owXq79v+lsFkW54bOGbiDQ" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/lodash@4.17.10/lodash.min.js"></script>
+
+<style>
+    table {
+        border: none;
+    }
+
+    table tr td {
+        border: 1px solid black;
+        width: 10vmin;
+        height: 10vmin;
+
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    .from {
+        background: green;
+    }
+
+    .to {
+        background: red;
+    }
+
+    i {
+        transition-duration: 1s;
+        transition-property: left, top;
+    }
+
+    input {
+        text-align: center;
+    }
+</style>
+
+<div>
+    You score is <input type="number" value="0" readonly />
+</div>
+
+<table id="field"></table>
+
+<script>
+    const SIZE = 10;
+
+    const VALUES = [
+        "fas fa-adjust",
+        "fas fa-beer",
+        "fas fa-archway",
+        "fas fa-at",
+        "fas fa-bomb",
+    ];
+
+    class ScoreBoard {
+        constructor(el) {
+            this.el = el;
+            this.score = 0;
+        }
+
+        plusScore(val){
+            this.score += val;
+            this.el.querySelector('input').value = this.score;
+        }
+    }
+
+    class Field {
+        /**
+         * @param {HTMLTableElement} el
+         * @param {String[]} values
+         */
+        constructor(el, values) {
+            this.el = el;
+            this.possibleValues = values;
+
+            this.el.addEventListener('click', e => {
+                let cell = e.path.find(el => el.tagName === 'TD');
+                if(cell){
+                    if(cell === this.from) {
+                        cell.classList.remove('from');
+                        this.from = null;
+                    } else if(this.from && !this.to) {
+                        cell.classList.add('to');
+                        this.to = cell;
+
+                        this
+                            .switchIcons(this.from.firstElementChild, this.to.firstElementChild)
+                            .then(() => this.matcher.match(this.to))
+                            .then(async figure => {
+                                this.from.classList.remove('from');
+                                this.to.classList.remove('to');
+
+                                figure.forEach(cell => cell.firstElementChild.style.visibility = 'hidden');
+
+                                await this.fallDownIcons(_.first(figure), _.last(figure));
+                                this.fillLine(_.first(figure), _.last(figure));
+
+
+                                this.onUpdateScores(figure);
+                            })
+                            .catch(() => {
+                                this.from.classList.remove('from');
+                                this.to.classList.remove('to');
+                            })
+                            .finally(() => {
+                                this.from = null;
+                                this.to = null;
+                            })
+                    } else {
+                        if(this.from) {
+                            this.from.classList.remove('from');
+                        }
+
+                        this.from = cell;
+                        cell.classList.add('from');
+                    }
+                }
+            });
+
+            this.from = null;
+            this.to = null;
+
+            this.matcher = new Matcher();
+            this.onUpdateScores = _.noop;
+        }
+
+        async fallDownIcons(cellStart, cellEnd){
+            const rowN = cellStart.parentElement.rowIndex,
+                startX = cellStart.cellIndex,
+                endX = cellEnd.cellIndex;
+
+            const actions = [];
+
+            for(let row=rowN; row>=1; row--){
+                const set = [];
+
+                for(let x=startX; x<=endX; x++) {
+                    set.push(() => this.switchIcons(
+                        this.el.rows[row].cells[x].firstChild,
+                        this.el.rows[row-1].cells[x].firstChild,
+                        .1
+                    ));
+                }
+
+                actions.push(() => Promise.all(set.map(action => action())));
+            }
+
+            return actions.reduce(async (prev, current) => {
+                await prev;
+
+                return current();
+            }, Promise.resolve());
+        }
+
+        fillLine(cellStart, cellEnd){
+            for(let x=cellStart.cellIndex; x<=cellEnd.cellIndex; x++) {
+                let cell = this.el.rows[0].cells[x];
+                cell.innerHTML = '';
+                cell.appendChild(this.createIcon());
+            }
+        }
+
+        createIcon(){
+            const icon = document.createElement('i');
+            icon.className = this.possibleValues[_.random(this.possibleValues.length - 1)];
+
+            return icon;
+        }
+
+        /**
+         * @param {HTMLElement} el1
+         * @param {HTMLElement} el2
+         * @param {Number} animationDuration in sec
+         */
+        switchIcons(el1, el2, animationDuration = 1){
+            const rect1 = el1.getBoundingClientRect();
+            const rect2 = el2.getBoundingClientRect();
+
+            el1.style.position = 'absolute';
+            el2.style.position = 'absolute';
+
+            el1.style.transitionDuration = `${animationDuration}s`;
+            el2.style.transitionDuration = `${animationDuration}s`;
+
+            this.setElFromRect(el1, rect1);
+            this.setElFromRect(el2, rect2);
+
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    this.setElFromRect(el1, rect2);
+                    this.setElFromRect(el2, rect1);
+
+                    setTimeout(() => {
+                        const fromParent = el1.parentElement;
+                        const toParent = el2.parentElement;
+
+                        fromParent.removeChild(el1);
+                        toParent.removeChild(el2);
+
+                        fromParent.appendChild(el2);
+                        toParent.appendChild(el1);
+
+                        el1.style.position = 'static';
+                        el2.style.position = 'static';
+
+                        resolve();
+                    }, animationDuration * 1000);
+                })
+            });
+        }
+
+        setElFromRect(el, rect){
+            el.style.top = `${rect.top}px`;
+            el.style.left= `${rect.left}px`;
+        }
+
+        fill(size) {
+            for(let x=0; x<size; x++){
+                let row = document.createElement('tr');
+
+                for(let y=0; y<size; y++){
+                    let cell = document.createElement('td');
+
+                    cell.appendChild(this.createIcon());
+
+                    row.appendChild(cell);
+                }
+
+                this.el.appendChild(row);
+            }
+        }
+    }
+
+    class Matcher {
+        /**
+         * @param {HTMLTableColElement} el
+         */
+        match(el){
+            return new Promise((resolve, reject) => {
+                const figure = this.matchHorizontal(el);
+
+                if(figure.length >1) {
+                    return resolve(_.sortBy(figure, 'cellIndex'));
+                }
+
+                reject('no figure matched');
+            });
+        }
+
+        matchHorizontal(el){
+            const row = el.parentElement;
+            let figure= [el];
+
+            // right
+            for(let x=el.cellIndex+1; x<SIZE; x++){
+                let nextCell = row.cells[x];
+                if (el.firstChild.className !== nextCell.firstChild.className) {
+                    break;
+                }
+
+                figure.push(nextCell);
+            }
+
+            // left
+            for(let x=el.cellIndex-1; x>=0; x--){
+                let nextCell = row.cells[x];
+                if (el.firstChild.className !== nextCell.firstChild.className) {
+                    break;
+                }
+
+                figure.push(nextCell);
+            }
+
+            return figure;
+        }
+    }
+
+    const field = new Field(document.getElementById('field'), VALUES);
+    field.fill(SIZE);
+
+    const scores = new ScoreBoard(document.querySelector('div'));
+
+    field.onUpdateScores = figure => scores.plusScore(figure.length);
+
+
+</script>
